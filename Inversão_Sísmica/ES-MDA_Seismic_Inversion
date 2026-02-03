@@ -57,7 +57,7 @@ SeisData = np.concatenate((Snear, Smid, Sfar))
 ns = len(Snear)
 nd = len(SeisData)
 
-#% Prior ensemble
+#% Ensemble a Priori
 nsim = 200
 Vpsim  = Vp[:, None]   + 120 * np.random.randn(nz, nsim)
 Vssim  = Vs[:, None]   + 80  * np.random.randn(nz, nsim)
@@ -109,7 +109,7 @@ for _ in range(niter):
 
     SeisPred = forward_ensemble(Vppost, Vspost, Rhopost)
 
-#% Mean a posteriori
+#% Mean a Posteriori
 mpost = np.mean(PostModels, axis=1)
 Vpmean  = mpost[0:nz]
 Vsmean  = mpost[nz:2*nz]
@@ -139,5 +139,6 @@ plt.title("Density")
 
 plt.tight_layout()
 plt.show()
+
 
 
