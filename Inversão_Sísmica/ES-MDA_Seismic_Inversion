@@ -1,1 +1,143 @@
+import numpy as np
+import matplotlib.pyplot as plt
+
+#% Grid
+nz = 100
+dz = 1.0
+z = np.arange(nz) * dz
+theta = [15, 30, 45]
+
+#% True elastic model (1D)
+Vp = 2000 * np.ones(nz)
+Vs = 1200 * np.ones(nz)
+dens = 2.3 * np.ones(nz)
+
+#% Layer contrast
+Vp[40:] += 400
+Vs[40:] += 200
+dens[40:] += 0.2
+
+#% Aki
+def Aki(Vp, Vs, dens, theta):
+    theta = np.deg2rad(theta)
+
+    dVp = np.diff(Vp) / Vp[:-1]
+    dVs = np.diff(Vs) / Vs[:-1]
+    dRho = np.diff(dens) / dens[:-1]
+
+    term1 = 0.5 * (1 + np.tan(theta)**2) * dVp
+    term2 = -4 * (Vs[:-1] / Vp[:-1])**2 * np.sin(theta)**2 * dVs
+    term3 = 0.5 * (1 - 4 * (Vs[:-1] / Vp[:-1])**2 * np.sin(theta)**2) * dRho
+
+    return term1 + term2 + term3
+
+#% Ricker wavelet
+def Ricker(t, f):
+    a = (np.pi * f * t)**2
+    return (1 - 2*a) * np.exp(-a)
+
+#% Foward Model
+def Fm(Vp, Vs, dens, theta, w):
+    r = Aki(Vp, Vs, dens, theta)
+    s = np.convolve(r, w, mode="same")
+    return s
+
+#% Wavelet
+dt = 0.001
+ntw = 64
+t = np.arange(-ntw//2, ntw//2) * dt
+w = Ricker(t, f=30)
+
+#% Observed seismic data
+Snear = Fm(Vp, Vs, dens, theta[0], w)
+Smid  = Fm(Vp, Vs, dens, theta[1], w)
+Sfar  = Fm(Vp, Vs, dens, theta[2], w)
+
+SeisData = np.concatenate((Snear, Smid, Sfar))
+ns = len(Snear)
+nd = len(SeisData)
+
+#% Prior ensemble
+nsim = 200
+Vpsim  = Vp[:, None]   + 120 * np.random.randn(nz, nsim)
+Vssim  = Vs[:, None]   + 80  * np.random.randn(nz, nsim)
+Rhosim = dens[:, None] + 0.06 * np.random.randn(nz, nsim)
+
+#% Stack model parameters
+PostModels = np.vstack((Vpsim, Vssim, Rhosim))
+
+#% Forward model for ensemble
+def forward_ensemble(Vp_e, Vs_e, Rho_e):
+    Seis = np.zeros((nd, nsim)) 
+    for i in range(nsim):
+        traces = []
+        for ang in theta:
+            traces.append(Fm(Vp_e[:, i], Vs_e[:, i], Rho_e[:, i], ang, w))
+        Seis[:, i] = np.concatenate(traces)
+    return Seis
+
+SeisPred = forward_ensemble(Vpsim, Vssim, Rhosim)
+
+#% Ensemble Smoother with Multiple Data Assimilation
+niter = 4
+alpha = 1.0 / niter
+varerr = 1e-4
+sigmaerr = varerr * np.eye(nd)
+
+for _ in range(niter):
+
+    Mmean = np.mean(PostModels, axis=1, keepdims=True)
+    Dmean = np.mean(SeisPred, axis=1, keepdims=True)
+
+    Mp = PostModels - Mmean
+    Dp = SeisPred - Dmean
+
+    Cmd = Mp @ Dp.T / (nsim - 1)
+    Cdd = Dp @ Dp.T / (nsim - 1) + alpha * sigmaerr
+
+    K = Cmd @ np.linalg.inv(Cdd)
+
+    noise = np.random.multivariate_normal(
+        np.zeros(nd), alpha * sigmaerr, nsim
+    ).T
+
+    PostModels = PostModels + K @ (SeisData[:, None] + noise - SeisPred)
+
+    Vppost  = PostModels[0:nz, :]
+    Vspost  = PostModels[nz:2*nz, :]
+    Rhopost = PostModels[2*nz:, :]
+
+    SeisPred = forward_ensemble(Vppost, Vspost, Rhopost)
+
+#% Mean a posteriori
+mpost = np.mean(PostModels, axis=1)
+Vpmean  = mpost[0:nz]
+Vsmean  = mpost[nz:2*nz]
+Rhomean = mpost[2*nz:]
+
+#% Plots
+plt.figure(figsize=(10, 5))
+
+plt.subplot(1, 3, 1)
+plt.plot(Vp, z, 'k', label="True")
+plt.plot(Vpmean, z, 'r', label="Posterior")
+plt.gca().invert_yaxis()
+plt.title("Vp")
+plt.legend()
+
+plt.subplot(1, 3, 2)
+plt.plot(Vs, z, 'k')
+plt.plot(Vsmean, z, 'r')
+plt.gca().invert_yaxis()
+plt.title("Vs")
+
+plt.subplot(1, 3, 3)
+plt.plot(dens, z, 'k')
+plt.plot(Rhomean, z, 'r')
+plt.gca().invert_yaxis()
+plt.title("Density")
+
+plt.tight_layout()
+plt.show()
+
 
